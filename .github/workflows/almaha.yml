@@ -1,0 +1,649 @@
+Name: Almaha Debts Groups APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Create Project Files
+        run: |
+          mkdir -p app/src/main/java/com/almaha/debts
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "AlmahaDebtsGroups"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+              id("com.google.devtools.ksp") version "1.9.24-1.0.20" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=true
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("com.google.devtools.ksp")
+          }
+
+          android {
+              namespace = "com.almaha.debts"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.almaha.debts"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 3
+                  versionName = "3.0"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.14"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              val roomVersion = "2.6.1"
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.activity:activity-compose:1.9.0")
+              implementation(platform("androidx.compose:compose-bom:2024.05.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material:material-icons-extended")
+              
+              implementation("androidx.room:room-runtime:$roomVersion")
+              implementation("androidx.room:room-ktx:$roomVersion")
+              ksp("androidx.room:room-compiler:$roomVersion")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:allowBackup="true"
+                  android:icon="@android:drawable/ic_menu_agenda"
+                  android:label="المها للتسويق الإلكتروني"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.NoTitleBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/almaha/debts/MainActivity.kt <<'EOF'
+          package com.almaha.debts
+
+          import android.content.ContentValues
+          import android.content.Intent
+          import android.graphics.Color as GColor
+          import android.graphics.Paint
+          import android.graphics.pdf.PdfDocument
+          import android.os.Bundle
+          import android.provider.MediaStore
+          import android.widget.Toast
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.*
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.room.*
+          import kotlinx.coroutines.flow.Flow
+          import kotlinx.coroutines.launch
+          import java.text.SimpleDateFormat
+          import java.util.*
+
+          // --- 1. Database Entities & DAOs ---
+          @Entity(tableName = "debt_groups")
+          data class DebtGroupEntity(
+              @PrimaryKey(autoGenerate = true) val id: Long = 0,
+              val groupName: String,
+              val createdAt: String
+          )
+
+          @Entity(tableName = "debts")
+          data class DebtEntity(
+              @PrimaryKey(autoGenerate = true) val id: Long = 0,
+              val groupId: Long,
+              val name: String,
+              val amount: Double,
+              val date: String
+          )
+
+          @Dao
+          interface AppDao {
+              @Query("SELECT * FROM debt_groups ORDER BY id DESC")
+              fun getAllGroups(): Flow<List<DebtGroupEntity>>
+
+              @Insert(onConflict = OnConflictStrategy.REPLACE)
+              suspend fun insertGroup(group: DebtGroupEntity): Long
+
+              @Delete
+              suspend fun deleteGroup(group: DebtGroupEntity)
+
+              @Query("SELECT * FROM debts WHERE groupId = :gId ORDER BY id DESC")
+              fun getDebtsForGroup(gId: Long): Flow<List<DebtEntity>>
+
+              @Query("SELECT * FROM debts WHERE groupId = :gId")
+              suspend fun getDebtsForGroupSync(gId: Long): List<DebtEntity>
+
+              @Insert(onConflict = OnConflictStrategy.REPLACE)
+              suspend fun insertDebt(debt: DebtEntity)
+
+              @Delete
+              suspend fun deleteDebt(debt: DebtEntity)
+          }
+
+          @Database(entities = [DebtGroupEntity::class, DebtEntity::class], version = 1)
+          abstract class AppDatabase : RoomDatabase() {
+              abstract fun appDao(): AppDao
+
+              companion object {
+                  @Volatile private var INSTANCE: AppDatabase? = null
+                  fun getDatabase(context: android.content.Context): AppDatabase {
+                      return INSTANCE ?: synchronized(this) {
+                          val instance = Room.databaseBuilder(
+                              context.applicationContext,
+                              AppDatabase::class.java,
+                              "almaha_groups_debts.db"
+                          ).build()
+                          INSTANCE = instance
+                          instance
+                      }
+                  }
+              }
+          }
+
+          // --- 2. Main Activity ---
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val db = AppDatabase.getDatabase(this)
+                  setContent {
+                      AlmahaTheme {
+                          MainNavigator(db.appDao())
+                      }
+                  }
+              }
+          }
+
+          val PrimaryBurgundy = Color(0xFF8B1538)
+          val DarkBurgundy = Color(0xFF5A0B22)
+          val AccentGold = Color(0xFFC9A24B)
+          val BackgroundCream = Color(0xFFFBF7F2)
+          val SoftGold = Color(0xFFF6EBCB)
+
+          @Composable
+          fun AlmahaTheme(content: @Composable () -> Unit) {
+              MaterialTheme(
+                  colorScheme = lightColorScheme(
+                      primary = PrimaryBurgundy,
+                      secondary = AccentGold,
+                      background = BackgroundCream
+                  ),
+                  content = content
+              )
+          }
+
+          @Composable
+          fun MainNavigator(dao: AppDao) {
+              var selectedGroup by remember { mutableStateOf<DebtGroupEntity?>(null) }
+
+              if (selectedGroup == null) {
+                  GroupsScreen(dao) { group -> selectedGroup = group }
+              } else {
+                  GroupDetailsScreen(dao, selectedGroup!!) { selectedGroup = null }
+              }
+          }
+
+          // --- 3. Groups Screen ---
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun GroupsScreen(dao: AppDao, onSelectGroup: (DebtGroupEntity) -> Unit) {
+              val groups by dao.getAllGroups().collectAsState(initial = emptyList())
+              val scope = rememberCoroutineScope()
+              val context = LocalContext.current
+
+              var showAddDialog by remember { mutableStateOf(false) }
+              var newGroupName by remember { mutableStateOf("") }
+
+              Scaffold(
+                  topBar = {
+                      TopAppBar(
+                          title = {
+                              Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                  Text("المها للتسويق الإلكتروني", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                  Text("إدارة ملفات ومجموعات الديون", color = AccentGold, fontSize = 13.sp)
+                              }
+                          },
+                          colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBurgundy)
+                      )
+                  },
+                  floatingActionButton = {
+                      FloatingActionButton(
+                          onClick = { showAddDialog = true },
+                          containerColor = AccentGold,
+                          contentColor = DarkBurgundy
+                      ) {
+                          Icon(Icons.Default.Add, contentDescription = "إضافة مجموعة جديدة")
+                      }
+                  }
+              ) { innerPadding ->
+                  Column(
+                      modifier = Modifier
+                          .fillMaxSize()
+                          .background(BackgroundCream)
+                          .padding(innerPadding)
+                          .padding(16.dp)
+                  ) {
+                      if (groups.isEmpty()) {
+                          Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                              Text("لا توجد ملفات مجموعات بعد.\nاضغط على زر (+) لإنشاء ملف جديد.", color = Color.Gray, fontSize = 16.sp)
+                          }
+                      } else {
+                          LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                              items(groups, key = { it.id }) { group ->
+                                  Card(
+                                      shape = RoundedCornerShape(12.dp),
+                                      colors = CardDefaults.cardColors(containerColor = Color.White),
+                                      elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+                                      modifier = Modifier
+                                          .fillMaxWidth()
+                                          .clickable { onSelectGroup(group) }
+                                  ) {
+                                      Row(
+                                          modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                                          horizontalArrangement = Arrangement.SpaceBetween,
+                                          alignment = Alignment.CenterVertically
+                                      ) {
+                                          Column(modifier = Modifier.weight(1f)) {
+                                              Text(group.groupName, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkBurgundy)
+                                              Spacer(modifier = Modifier.height(4.dp))
+                                              Text("تاريخ الإنشاء: ${group.createdAt}", fontSize = 12.sp, color = Color.Gray)
+                                          }
+                                          IconButton(onClick = {
+                                              scope.launch { dao.deleteGroup(group) }
+                                          }) {
+                                              Icon(Icons.Default.Delete, contentDescription = "حذف الملف", tint = Color.Red.copy(alpha = 0.7f))
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+
+              if (showAddDialog) {
+                  AlertDialog(
+                      onDismissRequest = { showAddDialog = false },
+                      title = { Text("إنشاء ملف مجموعة جديد") },
+                      text = {
+                          OutlinedTextField(
+                              value = newGroupName,
+                              onValueChange = { newGroupName = it },
+                              label = { Text("اسم الملف أو المجموعة (مثال: عملاء صنعاء)") },
+                              singleLine = true
+                          )
+                      },
+                      confirmButton = {
+                          Button(
+                              onClick = {
+                                  if (newGroupName.isNotBlank()) {
+                                      val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                                      scope.launch {
+                                          dao.insertGroup(DebtGroupEntity(groupName = newGroupName.trim(), createdAt = dateStr))
+                                          newGroupName = ""
+                                          showAddDialog = false
+                                      }
+                                  } else {
+                                      Toast.makeText(context, "الرجاء كتابة اسم المجموعة", Toast.LENGTH_SHORT).show()
+                                  }
+                              },
+                              colors = ButtonDefaults.buttonColors(containerColor = PrimaryBurgundy)
+                          ) {
+                              Text("إضافة", color = Color.WHITE)
+                          }
+                      },
+                      dismissButton = {
+                          TextButton(onClick = { showAddDialog = false }) {
+                              Text("إلغاء", color = PrimaryBurgundy)
+                          }
+                      }
+                  )
+              }
+          }
+
+          // --- 4. Group Details & PDF Export Screen ---
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun GroupDetailsScreen(dao: AppDao, group: DebtGroupEntity, onBack: () -> Unit) {
+              val debtsList by dao.getDebtsForGroup(group.id).collectAsState(initial = emptyList())
+              val scope = rememberCoroutineScope()
+              val context = LocalContext.current
+
+              var nameInput by remember { mutableStateOf("") }
+              var amountInput by remember { mutableStateOf("") }
+
+              val totalAmount = debtsList.sumOf { it.amount }
+
+              fun getCurrentDate() = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+              fun formatMoney(amount: Double) = String.format(Locale.US, "%,.0f ر.ي", amount)
+
+              // PDF Generator Function (Single Page Guaranteed)
+              fun exportGroupPdf() {
+                  if (debtsList.isEmpty()) {
+                      Toast.makeText(context, "لا توجد بيانات لتصديرها", Toast.LENGTH_SHORT).show()
+                      return
+                  }
+                  val doc = PdfDocument()
+                  val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+                  val page = doc.startPage(pageInfo)
+                  val c = page.canvas
+                  val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                  val cx = 297.5f
+
+                  // Header background
+                  p.color = GColor.parseColor("#5A0B22") // DarkBurgundy
+                  c.drawRect(0f, 0f, 595f, 120f, p)
+                  p.color = GColor.parseColor("#C9A24B") // AccentGold
+                  c.drawRect(0f, 120f, 595f, 124f, p)
+
+                  p.textAlign = Paint.Align.CENTER
+                  p.color = GColor.WHITE
+                  p.textSize = 26f
+                  p.isFakeBoldText = true
+                  c.drawText("المها للتسويق الإلكتروني", cx, 48f, p)
+
+                  p.isFakeBoldText = false
+                  p.textSize = 15f
+                  p.color = GColor.parseColor("#E4C77E")
+                  c.drawText("ملف المجموعة: ${group.groupName}", cx, 76f, p)
+                  p.textSize = 12f
+                  p.color = GColor.WHITE
+                  c.drawText("تاريخ الإصدار: ${getCurrentDate()}", cx, 102f, p)
+
+                  // Table Header
+                  val left = 40f
+                  val right = 555f
+                  val top = 145f
+                  p.color = GColor.parseColor("#8B1538") // PrimaryBurgundy
+                  c.drawRect(left, top, right, top + 30f, p)
+
+                  p.color = GColor.WHITE
+                  p.textSize = 14f
+                  p.isFakeBoldText = true
+                  p.textAlign = Paint.Align.RIGHT
+                  c.drawText("اسم المدين", right - 12f, top + 20f, p)
+                  p.textAlign = Paint.Align.LEFT
+                  c.drawText("المبلغ (ريال يمني)", left + 12f, top + 20f, p)
+                  p.isFakeBoldText = false
+
+                  // Table Rows (Fits tightly on 1 page)
+                  val startY = top + 30f
+                  val availableHeight = 620f - startY
+                  val n = debtsList.size
+                  val rowHeight = minOf(30f, availableHeight / maxOf(n, 1))
+                  val textSize = (rowHeight * 0.45f).coerceIn(10f, 13f)
+
+                  for ((i, d) in debtsList.withIndex()) {
+                      val y = startY + i * rowHeight
+                      if (i % 2 == 0) {
+                          p.color = GColor.parseColor("#FBF4E4")
+                          c.drawRect(left, y, right, y + rowHeight, p)
+                      }
+                      val base = y + rowHeight / 2 + textSize * 0.35f
+                      p.textSize = textSize
+                      p.color = GColor.parseColor("#2B1018")
+
+                      p.textAlign = Paint.Align.RIGHT
+                      c.drawText(d.name, right - 12f, base, p)
+                      p.color = GColor.parseColor("#8B1538")
+                      p.textAlign = Paint.Align.LEFT
+                      c.drawText(formatMoney(d.amount), left + 12f, base, p)
+                  }
+
+                  // Footer Total Box
+                  val totalY = 740f
+                  p.color = GColor.parseColor("#5A0B22")
+                  c.drawRect(left, totalY, right, totalY + 44f, p)
+                  p.color = GColor.parseColor("#C9A24B")
+                  c.drawRect(left, totalY + 44f, right, totalY + 48f, p)
+
+                  p.textSize = 16f
+                  p.isFakeBoldText = true
+                  p.color = GColor.WHITE
+                  p.textAlign = Paint.Align.RIGHT
+                  c.drawText("الإجمالي الكلي", right - 12f, totalY + 28f, p)
+                  p.color = GColor.parseColor("#E4C77E")
+                  p.textAlign = Paint.Align.LEFT
+                  c.drawText(formatMoney(totalAmount), left + 12f, totalY + 28f, p)
+
+                  doc.finishPage(page)
+
+                  val fileName = "Almaha_${group.groupName.replace(" ", "_")}_${System.currentTimeMillis()}.pdf"
+                  val cv = ContentValues().apply {
+                      put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                      put(MediaStore.MediaColumns.MIME_TYPE, "application/pdf")
+                      put(MediaStore.MediaColumns.RELATIVE_PATH, "Download")
+                  }
+                  val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+                  if (uri != null) {
+                      context.contentResolver.openOutputStream(uri)?.use { doc.writeTo(it) }
+                      Toast.makeText(context, "تم حفظ ملف PDF في التنزيلات بصفحة واحدة", Toast.LENGTH_LONG).show()
+                      try {
+                          val intent = Intent(Intent.ACTION_VIEW).apply {
+                              setDataAndType(uri, "application/pdf")
+                              addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                          }
+                          context.startActivity(intent)
+                      } catch (e: Exception) {}
+                  }
+                  doc.close()
+              }
+
+              Scaffold(
+                  topBar = {
+                      TopAppBar(
+                          title = { Text(group.groupName, color = Color.White) },
+                          navigationIcon = {
+                              IconButton(onClick = onBack) {
+                                  Icon(Icons.Default.ArrowBack, contentDescription = "رجوع", tint = Color.White)
+                              }
+                          },
+                          actions = {
+                              IconButton(onClick = { exportGroupPdf() }) {
+                                  Icon(Icons.Default.PictureAsPdf, contentDescription = "تصدير PDF", tint = AccentGold)
+                              }
+                          },
+                          colors = TopAppBarDefaults.topAppBarColors(containerColor = DarkBurgundy)
+                      )
+                  },
+                  bottomBar = {
+                      Surface(color = DarkBurgundy, shadowElevation = 8.dp) {
+                          Row(
+                              modifier = Modifier.fillMaxWidth().padding(16.dp),
+                              horizontalArrangement = Arrangement.SpaceBetween,
+                              verticalAlignment = Alignment.CenterVertically
+                          ) {
+                              Text("إجمالي ديون المجموعة:", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                              Text(formatMoney(totalAmount), color = AccentGold, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                          }
+                      }
+                  }
+              ) { innerPadding ->
+                  Column(
+                      modifier = Modifier
+                          .fillMaxSize()
+                          .background(BackgroundCream)
+                          .padding(innerPadding)
+                          .padding(16.dp)
+                  ) {
+                      // Input Form
+                      Card(
+                          shape = RoundedCornerShape(12.dp),
+                          colors = CardDefaults.cardColors(containerColor = Color.White),
+                          elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                          modifier = Modifier.fillMaxWidth()
+                      ) {
+                          Column(modifier = Modifier.padding(14.dp)) {
+                              OutlinedTextField(
+                                  value = nameInput,
+                                  onValueChange = { nameInput = it },
+                                  label = { Text("اسم المدين") },
+                                  singleLine = true,
+                                  modifier = Modifier.fillMaxWidth()
+                              )
+                              Spacer(modifier = Modifier.height(8.dp))
+                              OutlinedTextField(
+                                  value = amountInput,
+                                  onValueChange = { amountInput = it },
+                                  label = { Text("المبلغ (ريال يمني)") },
+                                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                  singleLine = true,
+                                  modifier = Modifier.fillMaxWidth()
+                              )
+                              Spacer(modifier = Modifier.height(12.dp))
+                              Button(
+                                  onClick = {
+                                      val amt = amountInput.toDoubleOrNull()
+                                      if (nameInput.isNotBlank() && amt != null && amt > 0) {
+                                          scope.launch {
+                                              dao.insertDebt(
+                                                  DebtEntity(
+                                                      groupId = group.id,
+                                                      name = nameInput.trim(),
+                                                      amount = amt,
+                                                      date = getCurrentDate()
+                                                  )
+                                              )
+                                              nameInput = ""
+                                              amountInput = ""
+                                          }
+                                      } else {
+                                          Toast.makeText(context, "الرجاء إدخال الاسم والمبلغ الصحيح", Toast.LENGTH_SHORT).show()
+                                      }
+                                  },
+                                  colors = ButtonDefaults.buttonColors(containerColor = PrimaryBurgundy),
+                                  modifier = Modifier.fillMaxWidth(),
+                                  shape = RoundedCornerShape(8.dp)
+                              ) {
+                                  Text("إضافة المدين للملف", color = Color.WHITE, fontWeight = FontWeight.Bold)
+                              }
+                          }
+                      }
+
+                      Spacer(modifier = Modifier.height(16.dp))
+
+                      // List of Debts in Group
+                      LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                          items(debtsList, key = { it.id }) { item ->
+                              Card(
+                                  shape = RoundedCornerShape(8.dp),
+                                  colors = CardDefaults.cardColors(containerColor = Color.White),
+                                  modifier = Modifier.fillMaxWidth()
+                              ) {
+                                  Row(
+                                      modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                      horizontalArrangement = Arrangement.SpaceBetween,
+                                      verticalAlignment = Alignment.CenterVertically
+                                  ) {
+                                      Column(modifier = Modifier.weight(1f)) {
+                                          Text(item.name, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                          Text(item.date, fontSize = 12.sp, color = Color.Gray)
+                                      }
+                                      Text(formatMoney(item.amount), fontSize = 15.sp, color = PrimaryBurgundy, fontWeight = FontWeight.Bold)
+                                      IconButton(onClick = {
+                                          scope.launch { dao.deleteDebt(item) }
+                                      }) {
+                                          Icon(Icons.Default.Delete, contentDescription = "حذف", tint = Color.Red.copy(alpha = 0.7f))
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Publish APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Almaha Debts Groups v${{ github.run_number }}
+          files: app/build/outputs/apk/debug/app-debug.apk
